@@ -39,9 +39,16 @@ void dt_masks_gui_form_create(dt_masks_form_t *form, dt_masks_form_gui_t *gui, i
   gui->pipe_hash = gui->formid = gpt->points_count = gpt->border_count = gpt->source_count = 0;
   gpt->points = gpt->border = gpt->source = NULL;
 
+  gpt->strength = 0.0;
+
   if (dt_masks_get_points_border(darktable.develop,form, &gpt->points, &gpt->points_count,&gpt->border, &gpt->border_count,0))
   {
-    if (form->type & DT_MASKS_CLONE) dt_masks_get_points_border(darktable.develop,form, &gpt->source, &gpt->source_count,NULL,NULL,1);
+    if (form->type & DT_MASKS_CLONE)
+    {
+      dt_masks_point_circle_t *circle = (dt_masks_point_circle_t *) (g_list_first(form->points)->data);
+      dt_masks_get_points_border(darktable.develop,form, &gpt->source, &gpt->source_count,NULL,NULL,1);
+      gpt->strength = circle->strength;
+    }
     gui->pipe_hash = darktable.develop->preview_pipe->backbuf_hash;
     gui->formid = form->formid;
   }

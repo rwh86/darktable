@@ -110,7 +110,20 @@ static int dt_circle_events_mouse_scrolled(struct dt_iop_module_t *module, float
     else
     {
       dt_masks_point_circle_t *circle = (dt_masks_point_circle_t *) (g_list_first(form->points)->data);
-      if (gui->border_selected)
+      if ((state&GDK_SHIFT_MASK) == GDK_SHIFT_MASK)
+      {
+        if(up)
+        {
+          if (circle->strength==1.0) circle->strength=0.0;
+          else circle->strength = CLAMP(circle->strength+0.005f,0,1);
+        }
+        else
+        {
+          if (circle->strength==0.0) circle->strength=1.0;
+          else circle->strength = CLAMP(circle->strength-0.005f,0,1);
+        }
+      }
+      else if (gui->border_selected)
       {
         if(up && circle->border > 0.002f) circle->border *= 0.9f;
         else  if(circle->border < 1.0f  ) circle->border *= 1.0f/0.9f;
@@ -449,7 +462,15 @@ static void dt_circle_events_post_expose(cairo_t *cr,float zoom_scale,dt_masks_f
   //draw the source if any
   if (gpt->source_count>6)
   {
-    float radius = fabs(gpt->points[2] - gpt->points[0]);
+    const float radius = fabs(gpt->points[2] - gpt->points[0]);
+    const float angle = 2 * M_PI * gpt->strength - M_PI/2.0;
+    const float px = radius * cos (angle);
+    const float py = radius * sin (angle);
+
+    cairo_set_source_rgba(cr, .9, .1, .1, .8);
+    cairo_arc(cr, gpt->points[0]+px+dx,gpt->points[1]+py+dy, 2/zoom_scale, 0, 3 * M_PI);
+    cairo_fill(cr);
+    cairo_stroke(cr);
 
     // compute the dest inner circle intersection with the line from source center to dest center.
     float cdx = gpt->source[0] - gpt->points[0];
@@ -464,6 +485,7 @@ static void dt_circle_events_post_expose(cairo_t *cr,float zoom_scale,dt_masks_f
     float arrowx = gpt->points[0] + 1.11 * radius * cos (cangle);
     float arrowy = gpt->points[1] + 1.11 * radius * sin (cangle);
 
+    cairo_set_source_rgba(cr, .8, .8, .8, .8);
     cairo_move_to(cr,gpt->source[0]+dxs,gpt->source[1]+dys); // source center
     cairo_line_to(cr,arrowx+dx,arrowy+dy); // dest border
     // then draw to line for the arrow itself
