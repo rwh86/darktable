@@ -265,6 +265,14 @@ void modify_roi_in(struct dt_iop_module_t *self, struct dt_dev_pixelpipe_iop_t *
   roi_in->height = CLAMP(roib-roi_in->y, 1, piece->pipe->iheight*roi_in->scale-roi_in->y);
 }
 
+float pts (float *values, int x, int y, int width, int height)
+{
+  if (x<0||x>width || y<0||y>height)
+    return 0.0;
+  else
+    return values[x+y*width];
+}
+
 void process (struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, void *i, void *o, const dt_iop_roi_t *roi_in, const dt_iop_roi_t *roi_out)
 {
   dt_iop_spots_params_t *d = (dt_iop_spots_params_t *)piece->data;
@@ -370,6 +378,7 @@ void process (struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, void 
       }
       else
       {
+        double threshold = 0.0;
         //we get the mask
         float *mask;
         int posx,posy,width,height;
@@ -383,16 +392,171 @@ void process (struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, void 
           dt_masks_point_curve_t *pt = (dt_masks_point_curve_t *)g_list_nth_data(form->points,0);
           dx = pt->corner[0]*roi_in->scale*piece->buf_in.width - form->source[0]*roi_in->scale*piece->buf_in.width;
           dy = pt->corner[1]*roi_in->scale*piece->buf_in.height - form->source[1]*roi_in->scale*piece->buf_in.height;
+          threshold = 0.0;
         }
         else if (form->type & DT_MASKS_CIRCLE)
         {
           dt_masks_point_circle_t *pt = (dt_masks_point_circle_t *)g_list_nth_data(form->points,0);
           dx = pt->center[0]*roi_in->scale*piece->buf_in.width - form->source[0]*roi_in->scale*piece->buf_in.width;
           dy = pt->center[1]*roi_in->scale*piece->buf_in.height - form->source[1]*roi_in->scale*piece->buf_in.height;
+          threshold = pt->strength;
         }
         if (dx!=0 || dy!=0)
         {
-          //now we do the pixel clone
+          float *block1 = NULL, *block2 = NULL, *b = NULL;
+
+          // no threshold, do standard clone
+          if (threshold > .0f)
+          {
+            int npts = 0;
+            double mean;
+            double sum = 0;
+            double max = 0;
+            double scale;
+
+            block1 = malloc(sizeof(float)*fhs*fws);
+            block2 = malloc(sizeof(float)*fhs*fws);
+            float *bin = block1, *bout = block2;
+
+            // phase 1 - compute mean of pixels
+            for (int yy=fts+1 ; yy<fts+fhs-1; yy++)
+            {
+              //we test if we are inside roi_out
+              if (yy<roi_out->y || yy>=roi_out->y+roi_out->height) continue;
+              //we test if the source point is inside roi_in
+              if (yy-dy<roi_in->y || yy-dy>=roi_in->y+roi_in->height) continue;
+              for (int xx=fls+1 ; xx<fls+fws-1; xx++)
+              {
+                //we test if we are inside roi_out
+                if (xx<roi_out->x || xx>=roi_out->x+roi_out->width) continue;
+                //we test if the source point is inside roi_in
+                if (xx-dx<roi_in->x || xx-dx>=roi_in->x+roi_in->width) continue;
+
+                const int iout = 4*(roi_out->width*(yy-roi_out->y) + xx-roi_out->x);
+
+                double dist = 0.0;
+                for(int c=0; c<ch; c++)
+                  dist += out[iout+c]*out[iout+c];
+                dist = sqrt(dist);
+
+                if (dist>max) max = dist;
+
+                bout[(xx-1-fls)+(yy-1-fts)*fws] = dist;
+
+                npts++;
+                sum += dist;
+              }
+            }
+            mean = sum / npts;
+            scale = 1.0 / (max - mean);
+
+            // swap block1 & block2
+            float *btmp = bin;
+            bin = bout;
+            bout = btmp;
+
+            // phase 2 - flag pixels farther than threshold from mean
+            for (int yy=fts+1 ; yy<fts+fhs-1; yy++)
+            {
+              //we test if we are inside roi_out
+              if (yy<roi_out->y || yy>=roi_out->y+roi_out->height) continue;
+              //we test if the source point is inside roi_in
+              if (yy-dy<roi_in->y || yy-dy>=roi_in->y+roi_in->height) continue;
+              for (int xx=fls+1 ; xx<fls+fws-1; xx++)
+              {
+                //we test if we are inside roi_out
+                if (xx<roi_out->x || xx>=roi_out->x+roi_out->width) continue;
+                //we test if the source point is inside roi_in
+                if (xx-dx<roi_in->x || xx-dx>=roi_in->x+roi_in->width) continue;
+
+                const int x = xx-1-fls;
+                const int y = yy-1-fts;
+
+                float *v = &bin[x+y*fws];
+                float *vm = &bout[x+y*fws];
+
+                if (fabs(mean-*v)*scale > threshold)
+                  *v = 1.0;
+                else
+                  *v = fabs(mean - *v);
+
+                // initialize both blocks with the same data
+                *vm = *v;
+              }
+            }
+
+            // phase 3 - growth the mask
+            #define GROWTH_STEPS 4
+            for (int k=0; k<GROWTH_STEPS; k++)
+            {
+              for (int yy=fts+1 ; yy<fts+fhs-1; yy++)
+              {
+                //we test if we are inside roi_out
+                if (yy<roi_out->y || yy>=roi_out->y+roi_out->height) continue;
+                //we test if the source point is inside roi_in
+                if (yy-dy<roi_in->y || yy-dy>=roi_in->y+roi_in->height) continue;
+                for (int xx=fls+1 ; xx<fls+fws-1; xx++)
+                {
+                  //we test if we are inside roi_out
+                  if (xx<roi_out->x || xx>=roi_out->x+roi_out->width) continue;
+                  //we test if the source point is inside roi_in
+                  if (xx-dx<roi_in->x || xx-dx>=roi_in->x+roi_in->width) continue;
+
+                  const int x = xx-1-fls;
+                  const int y = yy-1-fts;
+
+                  if (pts(bin, x-1, y-1, fws, fhs)==1.0 || pts(bin, x, y-1, fws, fhs)==1.0 || pts(bin, x+1, y-1, fws, fhs)==1.0
+                      || pts(bin, x-1, y, fws, fhs)==1.0                                      || pts(bin, x+1, y, fws, fhs)==1.0
+                      || pts(bin, x-1, y+1, fws, fhs)==1.0 || pts(bin, x, y+1, fws, fhs)==1.0 || pts(bin, x+1, y+1, fws, fhs)==1.0)
+                    bout[x+y*fws] = 1.0;
+                }
+              }
+              // swap block1 & block2
+              float *btmp = bin;
+              bin = bout;
+              bout = btmp;
+            }
+
+            // phase 4 - smooth the mask
+            #define SMOOTH_STEPS 12
+            for (int k=0; k<SMOOTH_STEPS; k++)
+            {
+              for (int yy=fts+1 ; yy<fts+fhs-1; yy++)
+              {
+                //we test if we are inside roi_out
+                if (yy<roi_out->y || yy>=roi_out->y+roi_out->height) continue;
+                //we test if the source point is inside roi_in
+                if (yy-dy<roi_in->y || yy-dy>=roi_in->y+roi_in->height) continue;
+                for (int xx=fls+1 ; xx<fls+fws-1; xx++)
+                {
+                  //we test if we are inside roi_out
+                  if (xx<roi_out->x || xx>=roi_out->x+roi_out->width) continue;
+                  //we test if the source point is inside roi_in
+                  if (xx-dx<roi_in->x || xx-dx>=roi_in->x+roi_in->width) continue;
+
+                  const int x = xx-1-fls;
+                  const int y = yy-1-fts;
+                  const float m = ((float)SMOOTH_STEPS-k+1)/(float)SMOOTH_STEPS;
+
+                  float *v = &bout[x+y*fws];
+
+                  if (*v < m &&
+                      (pts(bin, x-1, y-1, fws, fhs)>=m    || pts(bin, x, y-1, fws, fhs)>=m || pts(bin, x+1, y-1, fws, fhs)>=m
+                       || pts(bin, x-1, y, fws, fhs)>=m                                    || pts(bin, x+1, y, fws, fhs)>=m
+                       || pts(bin, x-1, y+1, fws, fhs)>=m || pts(bin, x, y+1, fws, fhs)>=m || pts(bin, x+1, y+1, fws, fhs)>=m))
+                    *v = m;
+                }
+              }
+              // swap block1 & block2
+              float *btmp = bin;
+              bin = bout;
+              bout = btmp;
+            }
+            // final block is b1
+            b = bin;
+          }
+
+          //now we do the pixel clone or smart-clone
           for (int yy=fts+1 ; yy<fts+fhs-1; yy++)
           {
             //we test if we are inside roi_out
@@ -406,13 +570,29 @@ void process (struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, void 
               //we test if the source point is inside roi_in
               if (xx-dx<roi_in->x || xx-dx>=roi_in->x+roi_in->width) continue;
 
-              float f = mask[((int)((yy-fts)/roi_in->scale))*width + (int)((xx-fls)/roi_in->scale)];  //we can add the opacity here
+              float fm = mask[((int)((yy-fts)/roi_in->scale))*width + (int)((xx-fls)/roi_in->scale)];  //we can add the opacity here
+              float f = fm;
+
+              if (threshold > .0f)
+              {
+                float *v = &b[(xx-1-fls)+(yy-1-fts)*fws];
+                float fc = CLAMP(*v,0,1);
+                if (fc > .9 && fm > 0.3)
+                  f = fc;
+                else
+                  f = fm * fc;
+              }
 
               for(int c=0; c<ch; c++)
                 out[4*(roi_out->width*(yy-roi_out->y) + xx-roi_out->x) + c] =
                   out[4*(roi_out->width*(yy-roi_out->y) + xx-roi_out->x) + c] * (1.0f-f) +
                   in[4*(roi_in->width*(yy-dy-roi_in->y) + xx-dx-roi_in->x) + c] * f;
             }
+          }
+          if (threshold > .0f)
+          {
+            free(block1);
+            free(block2);
           }
         }
         free(mask);
