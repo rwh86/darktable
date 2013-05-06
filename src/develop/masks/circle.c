@@ -470,8 +470,8 @@ static void dt_circle_events_post_expose(cairo_t *cr,float zoom_scale,dt_masks_f
     cairo_stroke(cr);
 
     // compute the dest inner circle intersection with the line from source center to dest center.
-    float cdx = gpt->source[0] - gpt->points[0];
-    float cdy = gpt->source[1] - gpt->points[1];
+    const float cdx = gpt->source[0] - gpt->points[0];
+    const float cdy = gpt->source[1] - gpt->points[1];
     float cangle = atan(cdx / cdy);
 
     if (cdy>0) cangle = (M_PI/2) - cangle;
@@ -479,8 +479,8 @@ static void dt_circle_events_post_expose(cairo_t *cr,float zoom_scale,dt_masks_f
 
     // (arrowx,arrowy) is the point of intersection, we move it (factor 1.11) a bit farther than the
     // inner circle to avoid superposition.
-    float arrowx = gpt->points[0] + 1.11 * radius * cos (cangle);
-    float arrowy = gpt->points[1] + 1.11 * radius * sin (cangle);
+    const float arrowx = gpt->points[0] + 1.11 * radius * cos (cangle);
+    const float arrowy = gpt->points[1] + 1.11 * radius * sin (cangle);
 
     cairo_set_source_rgba(cr, .8, .8, .8, .8);
     cairo_move_to(cr,gpt->source[0]+dxs,gpt->source[1]+dys); // source center
