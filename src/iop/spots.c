@@ -399,7 +399,7 @@ void process (struct dt_iop_module_t *self, dt_dev_pixelpipe_iop_t *piece, void 
             if (yy<roi_out->y || yy>=roi_out->y+roi_out->height) continue;
             //we test if the source point is inside roi_in
             if (yy-dy<roi_in->y || yy-dy>=roi_in->y+roi_in->height) continue;
-            for (int xx=fls+1 ; xx<fls+fws-1; xx++)
+            for (int xx=fls+1; xx<fls+fws-1; xx++)
             {
               //we test if we are inside roi_out
               if (xx<roi_out->x || xx>=roi_out->x+roi_out->width) continue;
