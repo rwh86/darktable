@@ -981,6 +981,25 @@ void dtgtk_cairo_paint_overlays(cairo_t *cr, gint x, gint y, gint w, gint h, gin
   cairo_stroke(cr);
 }
 
+void dtgtk_cairo_paint_timelapse(cairo_t *cr, gint x, gint y, gint w, gint h, gint flags)
+{
+  gint s = w < h ? w : h;
+  cairo_translate(cr, x + (w / 2.0) - (s / 2.0), y + (h / 2.0) - (s / 2.0));
+  cairo_scale(cr, s, s);
+
+  cairo_set_line_width(cr, 0.2);
+  cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+  cairo_arc(cr, 0.5, 0.5, .9, 0, 5);
+
+  cairo_move_to(cr, 0.5, 0.5);
+  cairo_line_to(cr, 0.5, 0.1);
+  cairo_move_to(cr, 0.5, 0.5);
+  cairo_line_to(cr, 0.8, 0.8);
+  cairo_stroke(cr);
+
+  cairo_identity_matrix(cr);
+}
+
 // TODO: Find better icon
 void dtgtk_cairo_paint_grouping(cairo_t *cr, gint x, gint y, gint w, gint h, gint flags)
 {

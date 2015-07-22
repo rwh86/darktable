@@ -90,6 +90,7 @@ FILE(GLOB SOURCE_FILES
   "gui/gtk.c"
   "gui/hist_dialog.c"
   "gui/preferences.c"
+  "gui/timelapse.c"
   "gui/presets.c"
   "gui/styles_dialog.c"
   "libs/lib.c"

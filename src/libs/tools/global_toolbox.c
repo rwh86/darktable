@@ -21,6 +21,7 @@
 #include "libs/lib.h"
 #include "gui/accelerators.h"
 #include "gui/preferences.h"
+#include "gui/timelapse.h"
 #include "dtgtk/button.h"
 #include "dtgtk/togglebutton.h"
 #include "control/conf.h"
@@ -30,9 +31,11 @@ DT_MODULE(1)
 
 typedef struct dt_lib_tool_preferences_t
 {
-  GtkWidget *preferences_button, *grouping_button, *overlays_button;
+  GtkWidget *preferences_button, *grouping_button, *overlays_button, *timelapse_button;
 } dt_lib_tool_preferences_t;
 
+/* callback for timelapse button */
+static void _lib_timelapse_button_clicked(GtkWidget *widget, gpointer user_data);
 /* callback for grouping button */
 static void _lib_filter_grouping_button_clicked(GtkWidget *widget, gpointer user_data);
 /* callback for preference button */
@@ -72,6 +75,14 @@ void gui_init(dt_lib_module_t *self)
   self->data = (void *)d;
 
   self->widget = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
+
+  /* create the timelapse button */
+  d->timelapse_button = dtgtk_button_new(dtgtk_cairo_paint_timelapse, CPF_STYLE_FLAT);
+  gtk_widget_set_size_request(d->timelapse_button, DT_PIXEL_APPLY_DPI(18), DT_PIXEL_APPLY_DPI(18));
+  gtk_box_pack_start(GTK_BOX(self->widget), d->timelapse_button, FALSE, FALSE, 2);
+  g_object_set(G_OBJECT(d->timelapse_button), "tooltip-text", _("interpolate image settings over timelapses"), (char *)NULL);
+  g_signal_connect(G_OBJECT(d->timelapse_button), "clicked", G_CALLBACK(_lib_timelapse_button_clicked),
+                   NULL);
 
   /* create the grouping button */
   d->grouping_button = dtgtk_togglebutton_new(dtgtk_cairo_paint_grouping, CPF_STYLE_FLAT);
@@ -114,6 +125,11 @@ void gui_cleanup(dt_lib_module_t *self)
 void _lib_preferences_button_clicked(GtkWidget *widget, gpointer user_data)
 {
   dt_gui_preferences_show();
+}
+
+static void _lib_timelapse_button_clicked(GtkWidget *widget, gpointer user_data)
+{
+  dt_gui_timelapse_show();
 }
 
 static void _lib_filter_grouping_button_clicked(GtkWidget *widget, gpointer user_data)
