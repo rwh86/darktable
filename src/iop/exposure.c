@@ -27,6 +27,7 @@
 #include <string.h>
 #include <xmmintrin.h>
 
+#include "iop/exposure.h"
 #include "common/opencl.h"
 #include "develop/develop.h"
 #include "develop/imageop.h"
@@ -913,6 +914,61 @@ void gui_cleanup(struct dt_iop_module_t *self)
 
   free(self->gui_data);
   self->gui_data = NULL;
+}
+
+float dt_exposure_get_black(const int imgid)
+{
+  // find the exposure module -- the pointer stays valid until darktable shuts down
+  static dt_iop_module_so_t *exposure_mod = NULL;
+  if(exposure_mod == NULL)
+  {
+    GList *modules = g_list_first(darktable.iop);
+    while(modules)
+    {
+      dt_iop_module_so_t *module = (dt_iop_module_so_t *)(modules->data);
+      if(!strcmp(module->op, "exposure"))
+      {
+        exposure_mod = module;
+        break;
+      }
+      modules = g_list_next(modules);
+    }
+  }
+
+  /* params in the exposure module:
+  dt_iop_exposure_mode_t mode;
+  float black;
+  float exposure;
+  float deflicker_percentile, deflicker_target_level;
+  dt_iop_exposure_deflicker_histogram_source_t deflicker_histogram_source;*/
+
+  float *black = 0;
+  float *exposure = 0;
+  float *deflicker_percentile = 0;
+  float *deflicker_target_level = 0;
+
+  // db lookup exposure params
+  if(exposure_mod && exposure_mod->get_p)
+  {
+    sqlite3_stmt *stmt;
+    DT_DEBUG_SQLITE3_PREPARE_V2(
+        dt_database_get(darktable.db),
+        "SELECT op_params FROM history WHERE imgid=?1 AND operation='exposure' ORDER BY num DESC LIMIT 1", -1,
+        &stmt, NULL);
+    DT_DEBUG_SQLITE3_BIND_INT(stmt, 1, imgid);
+    if(sqlite3_step(stmt) == SQLITE_ROW)
+    {
+      // use introspection to get the profile name from the binary params blob
+      const void *params = sqlite3_column_blob(stmt, 0);
+      black                  = (float *)exposure_mod->get_p(params, "black");
+      exposure               = (float *)exposure_mod->get_p(params, "exposure");
+      deflicker_percentile   = (float *)exposure_mod->get_p(params, "deflicker_percentile");
+      deflicker_target_level = (float *)exposure_mod->get_p(params, "deflicker_target_level");
+    }
+    sqlite3_finalize(stmt);
+  }
+  printf("black: %f, exposure: %f: deflicker_percentile: %f, deflicker_target_level: %f", *black, *exposure, *deflicker_percentile, *deflicker_target_level);
+  return *black;
 }
 
 // modelines: These editor modelines have been set for all relevant files by tools/update_modelines.sh

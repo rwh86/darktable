@@ -17,6 +17,7 @@
     along with darktable.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "iop/exposure.h"
 #include "common/darktable.h"
 #include "common/debug.h"
 #include "gui/gtk.h"
@@ -142,14 +143,17 @@ static void tree_insert_images(GtkListStore *store)
   gtk_list_store_append (store, &iter);  /* Acquire an iterator */
 
   DT_DEBUG_SQLITE3_PREPARE_V2(dt_database_get(darktable.db),
-                              "select filename, aperture, exposure, iso from selected_images s left join images i on s.imgid = i.id",
+                              "select imgid, filename, aperture, exposure, iso from selected_images s left join images i on s.imgid = i.id",
                               -1, &stmt, NULL);
   while(sqlite3_step(stmt) == SQLITE_ROW)
   {
-    gchar *filename = (gchar *)sqlite3_column_text(stmt, 0);
-    float aperture = sqlite3_column_double(stmt, 1);
-    float exposure = sqlite3_column_double(stmt, 2);
-    float iso = sqlite3_column_double(stmt, 3);
+    int imgid = (int)sqlite3_column_int(stmt,0);
+    gchar *filename = (gchar *)sqlite3_column_text(stmt, 1);
+    float aperture = sqlite3_column_double(stmt, 2);
+    float exposure = sqlite3_column_double(stmt, 3);
+    float iso = sqlite3_column_double(stmt, 4);
+
+    float black = dt_exposure_get_black(imgid);
 
     char info[255] = "";
     sprintf(info,"%f, %f, %f",aperture,exposure,iso);
@@ -162,7 +166,7 @@ static void tree_insert_images(GtkListStore *store)
       I_TEMPERATURE_COLUMN, 5000.0,
       I_TINT_COLUMN, 10.0,
       I_TARGET_LEVEL_COLUMN, 0.5,
-      I_BLACK_COLUMN, 0.0,
+      I_BLACK_COLUMN, black,
       I_SATURATION_COLUMN, 1.0,
       -1);
   }
