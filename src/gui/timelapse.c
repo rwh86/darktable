@@ -31,6 +31,7 @@ enum
   I_IMAGE_INFO_COLUMN,
   I_TEMPERATURE_COLUMN,
   I_TINT_COLUMN,
+  I_PERCENTILE_COLUMN,
   I_TARGET_LEVEL_COLUMN,
   I_BLACK_COLUMN,
   I_SATURATION_COLUMN,
@@ -38,9 +39,12 @@ enum
 };
 
 void dt_gui_timelapse_show();
-static void init_tab_imagelist(GtkWidget *book);
+//static void init_tab_imagelist(GtkWidget *book);
+static void init_imagelist(GtkWidget *dialog);
 static void tree_insert_images(GtkListStore *store);
-float dt_exposure_get_black(const int imgid);
+int dt_exposure_get_params(float *black, float *deflicker_percentile, float *deflicker_target_level, const int imgid);
+int dt_colisa_get_params(float *contrast, float *brightness, float *saturation, const int imgid);
+int dt_temperature_get_params(float *temp_out, float *coeffs, const int imgid);
 
 static GtkWidget *_timelapse_dialog;
 
@@ -49,25 +53,22 @@ void dt_gui_timelapse_show()
   GtkWidget *win = dt_ui_main_window(darktable.gui->ui);
   _timelapse_dialog = gtk_dialog_new_with_buttons(_("darktable timelapse tool"), GTK_WINDOW(win),
                                                     GTK_DIALOG_DESTROY_WITH_PARENT | GTK_DIALOG_MODAL,
-                                                    _("close"), GTK_RESPONSE_ACCEPT, NULL);
-  gtk_window_set_position(GTK_WINDOW(_timelapse_dialog), GTK_WIN_POS_CENTER_ALWAYS);
+                                                    _("_Cancel"), GTK_RESPONSE_REJECT,
+                                                    _("_OK"), GTK_RESPONSE_ACCEPT, NULL);
   GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(_timelapse_dialog));
-  GtkWidget *notebook = gtk_notebook_new();
-  gtk_widget_set_size_request(notebook, -1, DT_PIXEL_APPLY_DPI(500));
-  gtk_widget_set_name(notebook, "timelapse_notebook");
-  gtk_box_pack_start(GTK_BOX(content), notebook, TRUE, TRUE, 0);
+  gtk_widget_set_size_request (_timelapse_dialog, DT_PIXEL_APPLY_DPI(500),DT_PIXEL_APPLY_DPI(300));
 
-  init_tab_imagelist(notebook);
+  init_imagelist(content);
 
   gtk_widget_show_all(_timelapse_dialog);
   (void)gtk_dialog_run(GTK_DIALOG(_timelapse_dialog));
   gtk_widget_destroy(_timelapse_dialog);
-
 }
 
-static void init_tab_imagelist(GtkWidget *book)
+static void init_imagelist(GtkWidget *dialog)
 {
   GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
+  gtk_widget_set_vexpand(scroll,TRUE);
   GtkWidget *tree = gtk_tree_view_new();
   GtkListStore *model = gtk_list_store_new(
       I_N_COLUMNS,
@@ -76,6 +77,7 @@ static void init_tab_imagelist(GtkWidget *book)
       G_TYPE_STRING,  /* image info */
       G_TYPE_FLOAT,   /* white balance: temperature */
       G_TYPE_FLOAT,   /* white balance: tint */
+      G_TYPE_FLOAT,   /* exposure: percentile */
       G_TYPE_FLOAT,   /* exposure: target level */
       G_TYPE_FLOAT,   /* expsoure: black */
       G_TYPE_FLOAT   /* color correction: saturation */
@@ -88,14 +90,15 @@ static void init_tab_imagelist(GtkWidget *book)
   gtk_widget_set_margin_bottom(scroll, DT_PIXEL_APPLY_DPI(20));
   gtk_widget_set_margin_start(scroll, DT_PIXEL_APPLY_DPI(20));
   gtk_widget_set_margin_end(scroll, DT_PIXEL_APPLY_DPI(20));
-  gtk_notebook_append_page(GTK_NOTEBOOK(book), scroll, gtk_label_new(_("image list")));
+  //gtk_notebook_append_page(GTK_NOTEBOOK(book), scroll, gtk_label_new(_("image list")));
+  gtk_container_add(GTK_CONTAINER(dialog), scroll);
 
   //tree_insert_presets(model);
   tree_insert_images(model);
 
   // Setting up the cell renderers
-  renderer = gtk_cell_renderer_text_new();
-  column = gtk_tree_view_column_new_with_attributes(_("key"), renderer, "text", I_KEY_COLUMN, NULL);
+  renderer = gtk_cell_renderer_toggle_new();
+  column = gtk_tree_view_column_new_with_attributes(_("key"), renderer, "toggle", I_KEY_COLUMN, NULL);
   gtk_tree_view_append_column(GTK_TREE_VIEW(tree), column);
 
   renderer = gtk_cell_renderer_text_new();
@@ -112,6 +115,10 @@ static void init_tab_imagelist(GtkWidget *book)
 
   renderer = gtk_cell_renderer_text_new();
   column = gtk_tree_view_column_new_with_attributes(_("tint"), renderer, "text", I_TINT_COLUMN, NULL);
+  gtk_tree_view_append_column(GTK_TREE_VIEW(tree), column);
+
+  renderer = gtk_cell_renderer_text_new();
+  column = gtk_tree_view_column_new_with_attributes(_("percentile"), renderer, "text", I_PERCENTILE_COLUMN, NULL);
   gtk_tree_view_append_column(GTK_TREE_VIEW(tree), column);
 
   renderer = gtk_cell_renderer_text_new();
@@ -136,6 +143,7 @@ static void init_tab_imagelist(GtkWidget *book)
   g_object_unref(G_OBJECT(model));
 }
 
+/** build a scrollable table containing image names with their corresponding metadata */
 static void tree_insert_images(GtkListStore *store)
 {
   GtkTreeIter iter;
@@ -154,50 +162,41 @@ static void tree_insert_images(GtkListStore *store)
     float exposure = sqlite3_column_double(stmt, 3);
     float iso = sqlite3_column_double(stmt, 4);
 
-    float black = dt_exposure_get_black(imgid);
+    float black, deflicker_percentile, deflicker_target_level = 0.0;
+    dt_exposure_get_params(&black, &deflicker_percentile, &deflicker_target_level, imgid); 
 
+    char expo_str[16] = "";
+    if(exposure <= 0.5)
+            snprintf(expo_str, sizeof(expo_str), "1/%.0f", 1.0 / exposure);
+    else
+            snprintf(expo_str, sizeof(expo_str), "%.1f''", exposure);
     char info[255] = "";
-    sprintf(info,"%f, %f, %f",aperture,exposure,iso);
+    snprintf(info,sizeof(info),"f/%.1f, %ss, iso %.0f",aperture,expo_str,iso);
 
-    gtk_list_store_append (store, &iter);
+    float contrast, brightness, saturation = 0.0;
+    dt_colisa_get_params(&contrast, &brightness, &saturation, imgid); 
+
+    float temp_out = 0.0, coeffs[3] = {0.0, 0.0, 0.0};
+    dt_temperature_get_params(&temp_out, coeffs, imgid);
+
     gtk_list_store_set (store, &iter,
       I_KEY_COLUMN, FALSE,
       I_FILENAME_COLUMN, filename,
       I_IMAGE_INFO_COLUMN, info,
       I_TEMPERATURE_COLUMN, 5000.0,
       I_TINT_COLUMN, 10.0,
-      I_TARGET_LEVEL_COLUMN, 0.5,
+      I_PERCENTILE_COLUMN, deflicker_percentile,
+      I_TARGET_LEVEL_COLUMN, deflicker_target_level,
       I_BLACK_COLUMN, black,
-      I_SATURATION_COLUMN, 1.0,
+      I_SATURATION_COLUMN, saturation,
       -1);
+    gtk_list_store_append (store, &iter);
   }
-
-  gtk_list_store_append (store, &iter);
-  gtk_list_store_set (store, &iter,
-    I_KEY_COLUMN, FALSE,
-    I_FILENAME_COLUMN, "asdf.CR2",
-    I_IMAGE_INFO_COLUMN, "f/4",
-    I_TEMPERATURE_COLUMN, 5000.0,
-    I_TINT_COLUMN, 10.0,
-    I_TARGET_LEVEL_COLUMN, 0.5,
-    I_BLACK_COLUMN, 0.0,
-    I_SATURATION_COLUMN, 1.0,
-    -1);
-
-  gtk_list_store_append (store, &iter);
-  gtk_list_store_set (store, &iter,
-    I_KEY_COLUMN, FALSE,
-    I_FILENAME_COLUMN, "bsdf.CR2",
-    I_IMAGE_INFO_COLUMN, "f/4",
-    I_TEMPERATURE_COLUMN, 6000.0,
-    I_TINT_COLUMN, 11.0,
-    I_TARGET_LEVEL_COLUMN, 0.6,
-    I_BLACK_COLUMN, 0.1,
-    I_SATURATION_COLUMN, 1.1,
-    -1);
+  // remove empty last row
+  gtk_list_store_remove (store, &iter);
 }
 
-float dt_exposure_get_black(const int imgid)
+int dt_exposure_get_params(float *black, float *deflicker_percentile, float *deflicker_target_level, const int imgid)
 {
   // find the exposure module -- the pointer stays valid until darktable shuts down
   static dt_iop_module_so_t *exposure_mod = NULL;
@@ -216,17 +215,12 @@ float dt_exposure_get_black(const int imgid)
     }
   }
 
-  /* params in the exposure module:
+  /* params available in the exposure module:
   dt_iop_exposure_mode_t mode;
   float black;
   float exposure;
   float deflicker_percentile, deflicker_target_level;
   dt_iop_exposure_deflicker_histogram_source_t deflicker_histogram_source;*/
-
-  float *black = 0;
-  float *exposure = 0;
-  float *deflicker_percentile = 0;
-  float *deflicker_target_level = 0;
 
   // db lookup exposure params
   if(exposure_mod && exposure_mod->get_p)
@@ -239,18 +233,118 @@ float dt_exposure_get_black(const int imgid)
     DT_DEBUG_SQLITE3_BIND_INT(stmt, 1, imgid);
     if(sqlite3_step(stmt) == SQLITE_ROW)
     {
-      // use introspection to get the profile name from the binary params blob
+      // use introspection to get the values from the binary params blob
       const void *params = sqlite3_column_blob(stmt, 0);
-      black                  = (float *)exposure_mod->get_p(params, "black");
-      exposure               = (float *)exposure_mod->get_p(params, "exposure");
-      deflicker_percentile   = (float *)exposure_mod->get_p(params, "deflicker_percentile");
-      deflicker_target_level = (float *)exposure_mod->get_p(params, "deflicker_target_level");
+      //*dt_iop_exposure_mode_t = *(float *)exposure_mod->get_p(params, "black");
+      *black                  = *(float *)exposure_mod->get_p(params, "black");
+      //*exposure               = *(float *)exposure_mod->get_p(params, "exposure");
+      *deflicker_percentile   = *(float *)exposure_mod->get_p(params, "deflicker_percentile");
+      *deflicker_target_level = *(float *)exposure_mod->get_p(params, "deflicker_target_level");
     }
     sqlite3_finalize(stmt);
   }
-  printf("black: %f, exposure: %f: deflicker_percentile: %f, deflicker_target_level: %f", *black, *exposure, *deflicker_percentile, *deflicker_target_level);
-  return *black;
+  dt_print(DT_DEBUG_LIGHTTABLE, "[lighttable] black: %f, deflicker_percentile: %f, deflicker_target_level: %f\n", *black, *deflicker_percentile, *deflicker_target_level);
+  return 0; //success
 }
+
+int dt_colisa_get_params(float *contrast, float *brightness, float *saturation, const int imgid)
+{
+  // find the colisa module -- the pointer stays valid until darktable shuts down
+  static dt_iop_module_so_t *colisa_mod = NULL;
+  if(colisa_mod == NULL)
+  {
+    GList *modules = g_list_first(darktable.iop);
+    while(modules)
+    {
+      dt_iop_module_so_t *module = (dt_iop_module_so_t *)(modules->data);
+      if(!strcmp(module->op, "colisa"))
+      {
+        colisa_mod = module;
+        dt_print(DT_DEBUG_LIGHTTABLE, "found module\n");
+        break;
+      }
+      modules = g_list_next(modules);
+    }
+  }
+
+  // params available in the colisa module:
+  // float contrast;
+  // float brightness;
+  // float saturation;
+
+  // db lookup colisa params
+  if(colisa_mod && colisa_mod->get_p)
+  {
+    sqlite3_stmt *stmt;
+    DT_DEBUG_SQLITE3_PREPARE_V2(
+        dt_database_get(darktable.db),
+        "SELECT op_params FROM history WHERE imgid=?1 AND operation='colisa' ORDER BY num DESC LIMIT 1", -1,
+        &stmt, NULL);
+    DT_DEBUG_SQLITE3_BIND_INT(stmt, 1, imgid);
+    if(sqlite3_step(stmt) == SQLITE_ROW)
+    {
+      // use introspection to get the values from the binary params blob
+      const void *params = sqlite3_column_blob(stmt, 0);
+      *contrast   = *(float *)colisa_mod->get_p(params, "contrast");
+      *brightness = *(float *)colisa_mod->get_p(params, "brightness");
+      *saturation = *(float *)colisa_mod->get_p(params, "saturation");
+      dt_print(DT_DEBUG_LIGHTTABLE, "row found\n");
+    }
+    sqlite3_finalize(stmt);
+  }
+  dt_print(DT_DEBUG_LIGHTTABLE, "[lighttable] contrast: %f, brightness: %f, saturation: %f\n", *contrast, *brightness, *saturation);
+  return 0; //success
+}
+
+int dt_temperature_get_params(float *temp_out, float *coeffs, const int imgid)
+{
+  // find the temperature module -- the pointer stays valid until darktable shuts down
+  static dt_iop_module_so_t *temperature_mod = NULL;
+  if(temperature_mod == NULL)
+  {
+    GList *modules = g_list_first(darktable.iop);
+    while(modules)
+    {
+      dt_iop_module_so_t *module = (dt_iop_module_so_t *)(modules->data);
+      if(!strcmp(module->op, "temperature"))
+      {
+        temperature_mod = module;
+        dt_print(DT_DEBUG_LIGHTTABLE, "found module\n");
+        break;
+      }
+      modules = g_list_next(modules);
+    }
+  }
+
+  // params available in the temperature module:
+  // float temp_out;
+  // float coeffs[3];
+
+  // db lookup temperature params
+  if(temperature_mod && temperature_mod->get_p)
+  {
+    sqlite3_stmt *stmt;
+    DT_DEBUG_SQLITE3_PREPARE_V2(
+        dt_database_get(darktable.db),
+        "SELECT op_params FROM history WHERE imgid=?1 AND operation='temperature' ORDER BY num DESC LIMIT 1", -1,
+        &stmt, NULL);
+    DT_DEBUG_SQLITE3_BIND_INT(stmt, 1, imgid);
+    if(sqlite3_step(stmt) == SQLITE_ROW)
+    {
+      // use introspection to get the values from the binary params blob
+      const void *params = sqlite3_column_blob(stmt, 0);
+      *temp_out = *(float *)temperature_mod->get_p(params, "temp_out");
+      coeffs[0]   = ((float *)temperature_mod->get_p(params, "coeffs"))[0];
+      coeffs[1]   = ((float *)temperature_mod->get_p(params, "coeffs"))[1];
+      coeffs[2]   = ((float *)temperature_mod->get_p(params, "coeffs"))[2];
+      dt_print(DT_DEBUG_LIGHTTABLE, "row found\n");
+    }
+    sqlite3_finalize(stmt);
+  }
+  dt_print(DT_DEBUG_LIGHTTABLE, "[lighttable] temp_out: %f, coeffs[0]: %f, coeffs[1]: %f coeffs[2]: %f\n", *temp_out, coeffs[0], coeffs[1], coeffs[2]);
+  return 0; //success
+}
+
 
 // modelines: These editor modelines have been set for all relevant files by tools/update_modelines.sh
 // vim: shiftwidth=2 expandtab tabstop=2 cindent
