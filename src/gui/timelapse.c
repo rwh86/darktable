@@ -24,6 +24,20 @@
 #include "gui/timelapse.h"
 
 // Values for the imagelist treeview
+typedef struct
+{
+  gboolean key;
+  gchar *filename;
+  gchar *image_info;
+  gfloat temperature;
+  gfloat tint;
+  gfloat percentile;
+  gfloat target_level;
+  gfloat black;
+  gfloat saturation;
+}
+image_row_t;
+
 enum
 {
   I_KEY_COLUMN,
@@ -40,13 +54,15 @@ enum
 
 void dt_gui_timelapse_show();
 //static void init_tab_imagelist(GtkWidget *book);
-static void init_imagelist(GtkWidget *dialog);
-static void tree_insert_images(GtkListStore *store);
-int dt_exposure_get_params(float *black, float *deflicker_percentile, float *deflicker_target_level, const int imgid);
-int dt_colisa_get_params(float *contrast, float *brightness, float *saturation, const int imgid);
-int dt_temperature_get_params(float *temp_out, float *coeffs, const int imgid);
+static void init_imagelist(GArray *image_table, GtkWidget *dialog);
+static void tree_insert_images(GArray *image_table, GtkListStore *store);
+static void cell_edited (GtkCellRendererText *cell, const gchar *path_string, const gchar *new_text, gpointer data);
+static int dt_exposure_get_params(float *black, float *deflicker_percentile, float *deflicker_target_level, const int imgid);
+static int dt_colisa_get_params(float *contrast, float *brightness, float *saturation, const int imgid);
+static int dt_temperature_get_params(float *temp_out, float *coeffs, const int imgid);
 
 static GtkWidget *_timelapse_dialog;
+static GArray *image_table = NULL;
 
 void dt_gui_timelapse_show()
 {
@@ -56,20 +72,22 @@ void dt_gui_timelapse_show()
                                                     _("_Cancel"), GTK_RESPONSE_REJECT,
                                                     _("_OK"), GTK_RESPONSE_ACCEPT, NULL);
   GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(_timelapse_dialog));
-  gtk_widget_set_size_request (_timelapse_dialog, DT_PIXEL_APPLY_DPI(500),DT_PIXEL_APPLY_DPI(300));
+  //gtk_widget_set_size_request (_timelapse_dialog, DT_PIXEL_APPLY_DPI(500),DT_PIXEL_APPLY_DPI(300));
 
-  init_imagelist(content);
+  init_imagelist(image_table, content);
 
   gtk_widget_show_all(_timelapse_dialog);
   (void)gtk_dialog_run(GTK_DIALOG(_timelapse_dialog));
   gtk_widget_destroy(_timelapse_dialog);
 }
 
-static void init_imagelist(GtkWidget *dialog)
+static void init_imagelist(GArray *image_table, GtkWidget *dialog)
 {
   GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
   gtk_widget_set_vexpand(scroll,TRUE);
   GtkWidget *tree = gtk_tree_view_new();
+  image_table = g_array_sized_new (FALSE, FALSE, sizeof (image_row_t), 1);
+
   GtkListStore *model = gtk_list_store_new(
       I_N_COLUMNS,
       G_TYPE_BOOLEAN,     /* key */
@@ -90,15 +108,14 @@ static void init_imagelist(GtkWidget *dialog)
   gtk_widget_set_margin_bottom(scroll, DT_PIXEL_APPLY_DPI(20));
   gtk_widget_set_margin_start(scroll, DT_PIXEL_APPLY_DPI(20));
   gtk_widget_set_margin_end(scroll, DT_PIXEL_APPLY_DPI(20));
-  //gtk_notebook_append_page(GTK_NOTEBOOK(book), scroll, gtk_label_new(_("image list")));
   gtk_container_add(GTK_CONTAINER(dialog), scroll);
 
-  //tree_insert_presets(model);
-  tree_insert_images(model);
+  tree_insert_images(image_table, model);
 
   // Setting up the cell renderers
   renderer = gtk_cell_renderer_toggle_new();
-  column = gtk_tree_view_column_new_with_attributes(_("key"), renderer, "toggle", I_KEY_COLUMN, NULL);
+  g_object_set(renderer, "editable", TRUE, NULL);
+  column = gtk_tree_view_column_new_with_attributes(_("key"), renderer, "active", I_KEY_COLUMN, NULL);
   gtk_tree_view_append_column(GTK_TREE_VIEW(tree), column);
 
   renderer = gtk_cell_renderer_text_new();
@@ -110,26 +127,34 @@ static void init_imagelist(GtkWidget *dialog)
   gtk_tree_view_append_column(GTK_TREE_VIEW(tree), column);
 
   renderer = gtk_cell_renderer_text_new();
+  g_object_set(renderer, "editable", TRUE, NULL);
+  g_signal_connect (renderer, "edited", G_CALLBACK(cell_edited), model);
+  g_object_set_data (G_OBJECT (renderer), "column", GINT_TO_POINTER (I_TEMPERATURE_COLUMN));
   column = gtk_tree_view_column_new_with_attributes(_("temperature"), renderer, "text", I_TEMPERATURE_COLUMN, NULL);
   gtk_tree_view_append_column(GTK_TREE_VIEW(tree), column);
 
   renderer = gtk_cell_renderer_text_new();
+  g_object_set(renderer, "editable", TRUE, NULL);
   column = gtk_tree_view_column_new_with_attributes(_("tint"), renderer, "text", I_TINT_COLUMN, NULL);
   gtk_tree_view_append_column(GTK_TREE_VIEW(tree), column);
 
   renderer = gtk_cell_renderer_text_new();
+  g_object_set(renderer, "editable", TRUE, NULL);
   column = gtk_tree_view_column_new_with_attributes(_("percentile"), renderer, "text", I_PERCENTILE_COLUMN, NULL);
   gtk_tree_view_append_column(GTK_TREE_VIEW(tree), column);
 
   renderer = gtk_cell_renderer_text_new();
+  g_object_set(renderer, "editable", TRUE, NULL);
   column = gtk_tree_view_column_new_with_attributes(_("target level"), renderer, "text", I_TARGET_LEVEL_COLUMN, NULL);
   gtk_tree_view_append_column(GTK_TREE_VIEW(tree), column);
 
   renderer = gtk_cell_renderer_text_new();
+  g_object_set(renderer, "editable", TRUE, NULL);
   column = gtk_tree_view_column_new_with_attributes(_("black point"), renderer, "text", I_BLACK_COLUMN, NULL);
   gtk_tree_view_append_column(GTK_TREE_VIEW(tree), column);
 
   renderer = gtk_cell_renderer_text_new();
+  g_object_set(renderer, "editable", TRUE, NULL);
   column = gtk_tree_view_column_new_with_attributes(_("saturation"), renderer, "text", I_SATURATION_COLUMN, NULL);
   gtk_tree_view_append_column(GTK_TREE_VIEW(tree), column);
 
@@ -143,8 +168,44 @@ static void init_imagelist(GtkWidget *dialog)
   g_object_unref(G_OBJECT(model));
 }
 
+static void
+cell_edited (GtkCellRendererText *cell, const gchar *path_string, const gchar *new_text, gpointer data)
+{
+  GtkTreeModel *model = (GtkTreeModel *)data;
+  GtkTreePath *path = gtk_tree_path_new_from_string (path_string);
+  GtkTreeIter iter;
+
+  gint column = GPOINTER_TO_INT (g_object_get_data (G_OBJECT (cell), "column"));
+
+  gtk_tree_model_get_iter (model, &iter, path);
+
+  switch (column) {
+    case I_TEMPERATURE_COLUMN:
+      {
+        /*
+        gint i;
+        gchar *old_text;
+
+        gtk_tree_model_get (model, &iter, column, &old_text, -1);
+        g_free (old_text);
+
+        i = gtk_tree_path_get_indices (path)[0];
+        g_free (g_array_index (image_table, image_row_t, i).product);
+        g_array_index (image_table, image_row_t, i).product = g_strdup (new_text);
+
+        gtk_list_store_set (GTK_LIST_STORE (model), &iter, column,
+                            g_array_index (image_table, image_row_t, i).product, -1);
+                            */
+        ;
+      }
+      break;
+    }
+
+  gtk_tree_path_free (path);
+}
+
 /** build a scrollable table containing image names with their corresponding metadata */
-static void tree_insert_images(GtkListStore *store)
+static void tree_insert_images(GArray *image_table, GtkListStore *store)
 {
   GtkTreeIter iter;
   sqlite3_stmt *stmt;
@@ -162,7 +223,7 @@ static void tree_insert_images(GtkListStore *store)
     float exposure = sqlite3_column_double(stmt, 3);
     float iso = sqlite3_column_double(stmt, 4);
 
-    float black, deflicker_percentile, deflicker_target_level = 0.0;
+    float black = 0.0, deflicker_percentile = 0.0, deflicker_target_level = 0.0;
     dt_exposure_get_params(&black, &deflicker_percentile, &deflicker_target_level, imgid); 
 
     char expo_str[16] = "";
@@ -178,6 +239,19 @@ static void tree_insert_images(GtkListStore *store)
 
     float temp_out = 0.0, coeffs[3] = {0.0, 0.0, 0.0};
     dt_temperature_get_params(&temp_out, coeffs, imgid);
+
+    image_row_t image_row;
+    image_row.key = FALSE;
+    image_row.filename = filename;
+    image_row.image_info = info;
+    image_row.temperature = 5000.0;
+    image_row.tint = 10.0;
+    image_row.percentile = deflicker_percentile;
+    image_row.target_level = deflicker_target_level;
+    image_row.black = black;
+    image_row.saturation = saturation;
+
+    g_array_append_vals (image_table, &image_row, 1);
 
     gtk_list_store_set (store, &iter,
       I_KEY_COLUMN, FALSE,
@@ -240,14 +314,14 @@ int dt_exposure_get_params(float *black, float *deflicker_percentile, float *def
       //*exposure               = *(float *)exposure_mod->get_p(params, "exposure");
       *deflicker_percentile   = *(float *)exposure_mod->get_p(params, "deflicker_percentile");
       *deflicker_target_level = *(float *)exposure_mod->get_p(params, "deflicker_target_level");
+      dt_print(DT_DEBUG_LIGHTTABLE, "[lighttable] black: %f, deflicker_percentile: %f, deflicker_target_level: %f\n", *black, *deflicker_percentile, *deflicker_target_level);
     }
     sqlite3_finalize(stmt);
   }
-  dt_print(DT_DEBUG_LIGHTTABLE, "[lighttable] black: %f, deflicker_percentile: %f, deflicker_target_level: %f\n", *black, *deflicker_percentile, *deflicker_target_level);
   return 0; //success
 }
 
-int dt_colisa_get_params(float *contrast, float *brightness, float *saturation, const int imgid)
+static int dt_colisa_get_params(float *contrast, float *brightness, float *saturation, const int imgid)
 {
   // find the colisa module -- the pointer stays valid until darktable shuts down
   static dt_iop_module_so_t *colisa_mod = NULL;
@@ -289,14 +363,14 @@ int dt_colisa_get_params(float *contrast, float *brightness, float *saturation, 
       *brightness = *(float *)colisa_mod->get_p(params, "brightness");
       *saturation = *(float *)colisa_mod->get_p(params, "saturation");
       dt_print(DT_DEBUG_LIGHTTABLE, "row found\n");
+      dt_print(DT_DEBUG_LIGHTTABLE, "[lighttable] contrast: %f, brightness: %f, saturation: %f\n", *contrast, *brightness, *saturation);
     }
     sqlite3_finalize(stmt);
   }
-  dt_print(DT_DEBUG_LIGHTTABLE, "[lighttable] contrast: %f, brightness: %f, saturation: %f\n", *contrast, *brightness, *saturation);
   return 0; //success
 }
 
-int dt_temperature_get_params(float *temp_out, float *coeffs, const int imgid)
+static int dt_temperature_get_params(float *temp_out, float *coeffs, const int imgid)
 {
   // find the temperature module -- the pointer stays valid until darktable shuts down
   static dt_iop_module_so_t *temperature_mod = NULL;
@@ -338,10 +412,10 @@ int dt_temperature_get_params(float *temp_out, float *coeffs, const int imgid)
       coeffs[1]   = ((float *)temperature_mod->get_p(params, "coeffs"))[1];
       coeffs[2]   = ((float *)temperature_mod->get_p(params, "coeffs"))[2];
       dt_print(DT_DEBUG_LIGHTTABLE, "row found\n");
+      dt_print(DT_DEBUG_LIGHTTABLE, "[lighttable] temp_out: %f, coeffs[0]: %f, coeffs[1]: %f coeffs[2]: %f\n", *temp_out, coeffs[0], coeffs[1], coeffs[2]);
     }
     sqlite3_finalize(stmt);
   }
-  dt_print(DT_DEBUG_LIGHTTABLE, "[lighttable] temp_out: %f, coeffs[0]: %f, coeffs[1]: %f coeffs[2]: %f\n", *temp_out, coeffs[0], coeffs[1], coeffs[2]);
   return 0; //success
 }
 
