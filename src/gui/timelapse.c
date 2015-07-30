@@ -61,16 +61,18 @@ static void cell_edited (GtkCellRendererText *cell, const gchar *path_string, co
 
 static GtkWidget *_timelapse_dialog;
 
+GArray *image_table;
+
 void dt_gui_timelapse_show()
 {
-  GArray *image_table = g_array_sized_new (FALSE, FALSE, sizeof (image_row_t), 1);
+  image_table = g_array_sized_new (FALSE, FALSE, sizeof (image_row_t), 1);
   GtkWidget *win = dt_ui_main_window(darktable.gui->ui);
   _timelapse_dialog = gtk_dialog_new_with_buttons(_("darktable timelapse tool"), GTK_WINDOW(win),
                                                     GTK_DIALOG_DESTROY_WITH_PARENT | GTK_DIALOG_MODAL,
                                                     _("_Cancel"), GTK_RESPONSE_REJECT,
                                                     _("_OK"), GTK_RESPONSE_ACCEPT, NULL);
   GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(_timelapse_dialog));
-  //gtk_widget_set_size_request (_timelapse_dialog, DT_PIXEL_APPLY_DPI(500),DT_PIXEL_APPLY_DPI(300));
+  gtk_widget_set_size_request (_timelapse_dialog, DT_PIXEL_APPLY_DPI(800),DT_PIXEL_APPLY_DPI(600));
 
   init_data(image_table);
   init_imagelist(image_table, content);
@@ -273,7 +275,7 @@ static void init_imagelist(GArray *image_table, GtkWidget *dialog)
 
   for( int ii = 0 ; ii < image_table->len ; ii++ )
   {
-    dt_print(DT_DEBUG_LIGHTTABLE, "[lighttable] ii: %d\n", ii);
+    //dt_print(DT_DEBUG_LIGHTTABLE, "[lighttable] ii: %d\n", ii);
     image_row_t row = g_array_index(image_table, image_row_t, ii);
     //dt_print(DT_DEBUG_LIGHTTABLE, "key: %d, filename: %s, image_info: %s, temperature: %f, tint: %f, percentile: %f, target_level: %f, black: %f, saturation: %f\n",
     //    row.key, row.filename, row.image_info, row.temperature, row.tint, row.percentile, row.target_level, row.black, row.saturation);
@@ -294,7 +296,7 @@ static void init_imagelist(GArray *image_table, GtkWidget *dialog)
   // remove empty last row
   gtk_list_store_remove (model, &iter);
 
-  // Setting up the cell renderers
+  // Set up the cell renderers
   renderer = gtk_cell_renderer_toggle_new();
   g_object_set(renderer, "editable", TRUE, NULL);
   column = gtk_tree_view_column_new_with_attributes(_("key"), renderer, "active", I_KEY_COLUMN, NULL);
@@ -327,6 +329,8 @@ static void init_imagelist(GArray *image_table, GtkWidget *dialog)
 
   renderer = gtk_cell_renderer_text_new();
   g_object_set(renderer, "editable", TRUE, NULL);
+  g_signal_connect (renderer, "edited", G_CALLBACK(cell_edited), model);
+  g_object_set_data (G_OBJECT (renderer), "column", GINT_TO_POINTER (I_TARGET_LEVEL_COLUMN));
   column = gtk_tree_view_column_new_with_attributes(_("target level"), renderer, "text", I_TARGET_LEVEL_COLUMN, NULL);
   gtk_tree_view_append_column(GTK_TREE_VIEW(tree), column);
 
@@ -354,31 +358,25 @@ static void
 cell_edited (GtkCellRendererText *cell, const gchar *path_string, const gchar *new_text, gpointer data)
 {
   GtkTreeModel *model = (GtkTreeModel *)data;
-  GtkTreePath *path = gtk_tree_path_new_from_string (path_string);
+  GtkTreePath *path   = gtk_tree_path_new_from_string (path_string);
+  gint column         = GPOINTER_TO_INT (g_object_get_data (G_OBJECT (cell), "column"));
+
   GtkTreeIter iter;
-
-  gint column = GPOINTER_TO_INT (g_object_get_data (G_OBJECT (cell), "column"));
-
   gtk_tree_model_get_iter (model, &iter, path);
 
+  //dt_print(DT_DEBUG_LIGHTTABLE, "[lighttable] cell_edited: %d, %s\n", column, path_string);
+
   switch (column) {
-    case I_TEMPERATURE_COLUMN:
+    case I_TARGET_LEVEL_COLUMN:
       {
-        /*
-        gint i;
-        gchar *old_text;
+        //dt_print(DT_DEBUG_LIGHTTABLE, "[lighttable]: %s\n", "I_TARGET_LEVEL_COLUMN");
+        gint ii = gtk_tree_path_get_indices (path)[0];
 
-        gtk_tree_model_get (model, &iter, column, &old_text, -1);
-        g_free (old_text);
+        g_array_index (image_table, image_row_t, ii).target_level = atof(new_text);
 
-        i = gtk_tree_path_get_indices (path)[0];
-        g_free (g_array_index (image_table, image_row_t, i).product);
-        g_array_index (image_table, image_row_t, i).product = g_strdup (new_text);
-
+        //dt_print(DT_DEBUG_LIGHTTABLE, "[lighttable] column: %i, row: %d, setting to: %f\n", column, ii, g_array_index(image_table, image_row_t, ii).target_level);
         gtk_list_store_set (GTK_LIST_STORE (model), &iter, column,
-                            g_array_index (image_table, image_row_t, i).product, -1);
-                            */
-        ;
+                            g_array_index (image_table, image_row_t, ii).target_level, -1);
       }
       break;
     }
