@@ -58,6 +58,7 @@ void dt_gui_timelapse_show();
 static void init_data(GArray *image_table);
 static void init_imagelist(GArray *image_table, GtkWidget *dialog);
 static void cell_edited (GtkCellRendererText *cell, const gchar *path_string, const gchar *new_text, gpointer data);
+static void cell_toggled (GtkCellRendererToggle *cell, const gchar *path_string, gpointer data);
 
 static GtkWidget *_timelapse_dialog;
 
@@ -298,7 +299,9 @@ static void init_imagelist(GArray *image_table, GtkWidget *dialog)
 
   // Set up the cell renderers
   renderer = gtk_cell_renderer_toggle_new();
-  g_object_set(renderer, "editable", TRUE, NULL);
+  //g_signal_connect (renderer, "edited", G_CALLBACK(cell_edited), model);
+  g_signal_connect (renderer, "toggled", G_CALLBACK (cell_toggled), model);
+  g_object_set_data (G_OBJECT (renderer), "column", GINT_TO_POINTER (I_KEY_COLUMN));
   column = gtk_tree_view_column_new_with_attributes(_("key"), renderer, "active", I_KEY_COLUMN, NULL);
   gtk_tree_view_append_column(GTK_TREE_VIEW(tree), column);
 
@@ -354,8 +357,7 @@ static void init_imagelist(GArray *image_table, GtkWidget *dialog)
   g_object_unref(G_OBJECT(model));
 }
 
-static void
-cell_edited (GtkCellRendererText *cell, const gchar *path_string, const gchar *new_text, gpointer data)
+static void cell_edited (GtkCellRendererText *cell, const gchar *path_string, const gchar *new_text, gpointer data)
 {
   GtkTreeModel *model = (GtkTreeModel *)data;
   GtkTreePath *path   = gtk_tree_path_new_from_string (path_string);
@@ -364,22 +366,43 @@ cell_edited (GtkCellRendererText *cell, const gchar *path_string, const gchar *n
   GtkTreeIter iter;
   gtk_tree_model_get_iter (model, &iter, path);
 
-  //dt_print(DT_DEBUG_LIGHTTABLE, "[lighttable] cell_edited: %d, %s\n", column, path_string);
+  gint ii = gtk_tree_path_get_indices (path)[0];
 
   switch (column) {
     case I_TARGET_LEVEL_COLUMN:
-      {
-        //dt_print(DT_DEBUG_LIGHTTABLE, "[lighttable]: %s\n", "I_TARGET_LEVEL_COLUMN");
-        gint ii = gtk_tree_path_get_indices (path)[0];
-
-        g_array_index (image_table, image_row_t, ii).target_level = atof(new_text);
-
-        //dt_print(DT_DEBUG_LIGHTTABLE, "[lighttable] column: %i, row: %d, setting to: %f\n", column, ii, g_array_index(image_table, image_row_t, ii).target_level);
-        gtk_list_store_set (GTK_LIST_STORE (model), &iter, column,
-                            g_array_index (image_table, image_row_t, ii).target_level, -1);
-      }
-      break;
+    {
+      g_array_index (image_table, image_row_t, ii).target_level = atof(new_text);
+      gtk_list_store_set (GTK_LIST_STORE (model), &iter, column,
+                          g_array_index (image_table, image_row_t, ii).target_level, -1);
     }
+    break;
+  }
+
+  gtk_tree_path_free (path);
+}
+
+static void cell_toggled (GtkCellRendererToggle *cell, const gchar *path_string, gpointer data) {
+  GtkTreeModel *model = (GtkTreeModel *)data;
+  GtkTreePath *path   = gtk_tree_path_new_from_string (path_string);
+  gint column         = GPOINTER_TO_INT (g_object_get_data (G_OBJECT (cell), "column"));
+
+  GtkTreeIter iter;
+  gtk_tree_model_get_iter (model, &iter, path);
+
+  gint ii = gtk_tree_path_get_indices (path)[0];
+
+  switch (column) {
+    case I_KEY_COLUMN:
+    {
+      gboolean key;
+      gtk_tree_model_get (model, &iter, I_KEY_COLUMN, &key, -1);
+      key ^= 1;
+      g_array_index (image_table, image_row_t, ii).key = key;
+      gtk_list_store_set (GTK_LIST_STORE (model), &iter, I_KEY_COLUMN, key, -1);
+      //dt_print(DT_DEBUG_LIGHTTABLE, "[lighttable] column: %i, row: %d, was set to: %d\n", column, ii, g_array_index(image_table, image_row_t, ii).key);
+    }
+    break;
+  }
 
   gtk_tree_path_free (path);
 }
